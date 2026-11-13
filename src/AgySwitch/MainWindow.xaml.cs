@@ -95,10 +95,10 @@ public partial class MainWindow : Window
 
         CurrentEmailText.Text = _accountService.CurrentAccountLabel;
         CurrentStateText.Text = !_accountService.AnyCurrentCredentialExists
-            ? "未检测到当前登录文件"
+            ? "未检测到当前 Windows 凭据"
             : _accountService.CurrentCredentialsExist
-                ? "当前认证文件可读取"
-                : "认证文件不完整，请检查所选目录";
+                ? "当前 Windows 凭据可读取"
+                : "当前 Windows 凭据为空，请重新登录 CLI";
 
         GeminiPathText.Text = paths.GeminiDirectory;
         AccountsPathText.Text = paths.AccountsDirectory;
@@ -137,7 +137,7 @@ public partial class MainWindow : Window
     {
         if (!_accountService.CurrentCredentialsExist)
         {
-            ShowError("当前认证文件不完整，无法备份。请检查 `.gemini` 目录是否包含 google_accounts.json 和 antigravity-oauth-token。", "无法备份");
+            ShowError("未检测到有效的 Windows 凭据 gemini:antigravity。请先登录 Antigravity CLI。", "无法备份");
             return;
         }
 
@@ -246,7 +246,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var prompt = new InputNameWindow("重命名账户", "新名称只保存在 profile.json 中，不会修改 Google 账户文件。", profile.Name) { Owner = this };
+        var prompt = new InputNameWindow("重命名账户", "新名称只保存在 profile.json 中，不会修改 Windows 凭据。", profile.Name) { Owner = this };
         if (prompt.ShowDialog() != true)
         {
             return;
@@ -310,7 +310,7 @@ public partial class MainWindow : Window
         var isCurrent = _accountService.IsCurrent(profile);
         var warning = isCurrent
             ? "\n\n这是当前正在使用的账户档案。删除只会移除档案副本，不会删除或退出 CLI 当前登录状态。"
-            : "\n\n这将删除该账户保存的认证文件和 profile.json。";
+            : "\n\n这将删除该账户保存的 Windows 凭据和档案目录。";
         var answer = MessageBox.Show(this,
             $"确定删除账户档案？\n\n{profile.Name}\n{profile.Email ?? "未知邮箱"}{warning}",
             "删除账户", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
@@ -384,7 +384,7 @@ public partial class MainWindow : Window
             QuotaStatusText.Text = "无法查询";
             _quotaCards = [];
             QuotaCardsItems.ItemsSource = null;
-            QuotaOutputText.Text = "未检测到完整的当前账户认证文件。";
+            QuotaOutputText.Text = "未检测到当前账户的 Windows 凭据。";
             _showRawQuotaOutput = true;
             ApplyQuotaViewState();
             QuotaUpdatedText.Text = "无法查询";

@@ -22,7 +22,7 @@
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="应用设置" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimary}" />
-                    <TextBlock Text="配置 Antigravity CLI 路径及本地 .gemini 认证目录" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,3,0,0" />
+                    <TextBlock Text="配置 Antigravity CLI 程序和额度查询使用的路径" FontSize="12" Foreground="{StaticResource TextSecondary}" Margin="0,3,0,0" />
                 </StackPanel>
             </Grid>
 
@@ -35,7 +35,7 @@
                             <Path Data="{StaticResource IconFolder}" Fill="{StaticResource TextSecondary}" Width="14" Height="14" Stretch="Uniform" VerticalAlignment="Center" Margin="0,0,6,0" />
                             <TextBlock Text="Gemini 配置目录" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
                         </StackPanel>
-                        <TextBlock Text="Antigravity CLI 实际使用的 .gemini 目录，包含认证文件及 accounts 备份档案" FontSize="11" Foreground="{StaticResource TextMuted}" Margin="0,0,0,8" />
+                        <TextBlock Text="CLI 配置目录，用于运行额度查询；账户档案保存在 Windows 用户目录下，令牌存于 Windows 凭据管理器" FontSize="11" Foreground="{StaticResource TextMuted}" Margin="0,0,0,8" />
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -87,7 +87,7 @@
                     <StackPanel Grid.Column="1">
                         <TextBlock Text="关于额度查询与文件安全" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
                         <TextBlock Text="• 额度查询通过调用 CLI /usage 获取，仅在手动点击时运行，无后台轮询。" FontSize="11" Foreground="{StaticResource TextSecondary}" Margin="0,4,0,2" />
-                        <TextBlock Text="• 认证文件仅在本地 .gemini 与账户目录间安全复制，不会向网络上传任何凭据。" FontSize="11" Foreground="{StaticResource TextSecondary}" />
+                        <TextBlock Text="• 登录凭据和备份保存在 Windows 凭据管理器中。" FontSize="11" Foreground="{StaticResource TextSecondary}" />
                     </StackPanel>
                 </Grid>
             </Border>

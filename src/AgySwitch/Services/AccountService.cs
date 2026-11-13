@@ -19,21 +19,28 @@ public sealed class AccountService
     private readonly AppSettings _settings;
     private readonly AccountIdentityReader _identityReader;
     private readonly AppLogger _logger;
+    private readonly string? _userDirectory;
+    internal ICredentialStore Credentials { get; }
 
-    public AccountService(AppSettings settings, AccountIdentityReader identityReader, AppLogger logger)
+    public AccountService(AppSettings settings, AccountIdentityReader identityReader, AppLogger logger, ICredentialStore? credentials = null, string? userDirectory = null)
     {
         _settings = settings;
         _identityReader = identityReader;
         _logger = logger;
+        _userDirectory = userDirectory;
+        Credentials = credentials ?? new WindowsCredentialStore();
+        Paths.MigrateLegacyMetadata();
     }
 
-    public AppPaths Paths => new(_settings.GeminiDirectory);
+    public AppPaths Paths => new(_settings.GeminiDirectory, _userDirectory);
 
-    public DetectedAccount? GetCurrentIdentity() => _identityReader.Read(Paths.CurrentGoogleAccounts);
+    public DetectedAccount? GetCurrentIdentity() => _identityReader.Read(Credentials.Read(WindowsCredentialStore.CurrentTarget));
 
-    public bool CurrentCredentialsExist => File.Exists(Paths.CurrentGoogleAccounts) && File.Exists(Paths.CurrentOAuthToken);
+    internal DetectedAccount? ReadIdentity(CredentialSnapshot? credential) => _identityReader.Read(credential);
 
-    public bool AnyCurrentCredentialExists => File.Exists(Paths.CurrentGoogleAccounts) || File.Exists(Paths.CurrentOAuthToken);
+    public bool CurrentCredentialsExist => Credentials.Read(WindowsCredentialStore.CurrentTarget) is { Blob.Length: > 0 };
+
+    public bool AnyCurrentCredentialExists => Credentials.Read(WindowsCredentialStore.CurrentTarget) is not null;
 
     public string CurrentAccountLabel
     {
@@ -81,16 +88,9 @@ public sealed class AccountService
                     continue;
                 }
 
-                var hasGoogle = File.Exists(paths.GetProfileGoogleAccounts(id));
-                var hasToken = File.Exists(paths.GetProfileOAuthToken(id));
-                profile.HasCredentials = hasGoogle && hasToken;
-                profile.CredentialStatus = hasGoogle && hasToken
-                    ? "认证文件完整"
-                    : !hasGoogle && !hasToken
-                        ? "缺少两个认证文件"
-                        : hasGoogle
-                            ? "缺少 OAuth Token"
-                            : "缺少 Google 账户文件";
+                var hasToken = ReadProfileCredential(paths, id) is { Blob.Length: > 0 };
+                profile.HasCredentials = hasToken;
+                profile.CredentialStatus = hasToken ? "Windows 凭据已保存" : "缺少新版凭据，请重新登录并备份";
                 profile.IsCurrent = Matches(profile, current);
                 if (profile.IsCurrent && string.IsNullOrWhiteSpace(profile.Email))
                 {
@@ -117,23 +117,12 @@ public sealed class AccountService
     public AccountProfile SaveCurrent(string name, bool saveAsNew = false)
     {
         var paths = Paths;
-        if (!File.Exists(paths.CurrentGoogleAccounts))
-        {
-            throw new InvalidOperationException("找不到当前 google_accounts.json。请确认选择的是 Antigravity CLI 使用的 .gemini 目录。");
-        }
-
-        if (!File.Exists(paths.CurrentOAuthToken))
-        {
-            throw new InvalidOperationException("找不到当前 antigravity-oauth-token。请确认 Antigravity CLI 已登录。");
-        }
-
+        var credential = Credentials.Read(WindowsCredentialStore.CurrentTarget)
+            ?? throw new InvalidOperationException("找不到 Windows 凭据 gemini:antigravity，请先登录 Antigravity CLI。");
         if (string.IsNullOrWhiteSpace(name))
-        {
             throw new InvalidOperationException("账户名称不能为空。");
-        }
-
-        var identity = _identityReader.Read(paths.CurrentGoogleAccounts)
-            ?? throw new InvalidOperationException("无法读取当前账户文件。");
+        var identity = _identityReader.Read(credential)
+            ?? throw new InvalidOperationException("无法从当前 Windows 凭据识别账户邮箱，请重新登录 CLI 后再备份。");
         var existing = saveAsNew ? null : FindMatchingProfile(identity);
         var profile = existing ?? new AccountProfile
         {
@@ -149,31 +138,27 @@ public sealed class AccountService
 
         var profileDirectory = paths.GetProfileDirectory(profile.Id);
         Directory.CreateDirectory(profileDirectory);
+        var credentialTarget = WindowsCredentialStore.ProfileTarget(paths, profile.Id);
+        var previousCredential = ReadProfileCredential(paths, profile.Id);
         try
         {
-            FilePairTransaction.Apply(paths.AccountsDirectory,
-            [
-                (paths.CurrentGoogleAccounts, paths.GetProfileGoogleAccounts(profile.Id)),
-                (paths.CurrentOAuthToken, paths.GetProfileOAuthToken(profile.Id))
-            ]);
+            Credentials.Write(credentialTarget, credential);
             WriteProfile(paths, profile);
             _logger.Info(existing is null ? $"已保存账户档案：{profile.Id}" : $"已更新账户档案：{profile.Id}");
             return profile;
         }
-        catch
+        catch (Exception saveError)
         {
-            if (existing is null && Directory.Exists(profileDirectory))
+            try
             {
-                try
-                {
-                    Directory.Delete(profileDirectory, true);
-                }
-                catch (IOException)
-                {
-                    // Preserve files if cleanup is blocked; the user can inspect the account directory.
-                }
+                if (previousCredential is null) Credentials.Delete(credentialTarget);
+                else Credentials.Write(credentialTarget, previousCredential);
+                if (existing is null && Directory.Exists(profileDirectory)) Directory.Delete(profileDirectory, true);
             }
-
+            catch (Exception rollbackError)
+            {
+                throw new IOException("保存账户失败，且未能恢复原来的档案凭据。", new AggregateException(saveError, rollbackError));
+            }
             throw;
         }
     }
@@ -232,6 +217,8 @@ public sealed class AccountService
             throw new InvalidOperationException("账户目录路径无效。");
         }
 
+        Credentials.Delete(WindowsCredentialStore.LegacyProfileTarget(paths, profile.Id));
+        Credentials.Delete(WindowsCredentialStore.ProfileTarget(paths, profile.Id));
         if (Directory.Exists(directory))
         {
             Directory.Delete(directory, true);
@@ -241,6 +228,19 @@ public sealed class AccountService
     }
 
     public string GetProfileDirectory(AccountProfile profile) => Paths.GetProfileDirectory(profile.Id);
+
+    internal CredentialSnapshot? ReadProfileCredential(AppPaths paths, string id)
+    {
+        var credential = Credentials.Read(WindowsCredentialStore.ProfileTarget(paths, id));
+        if (credential is not null) return credential;
+
+        credential = Credentials.Read(WindowsCredentialStore.LegacyProfileTarget(paths, id));
+        if (credential is not null)
+        {
+            Credentials.Write(WindowsCredentialStore.ProfileTarget(paths, id), credential);
+        }
+        return credential;
+    }
 
     public bool IsCurrent(AccountProfile profile) => Matches(profile, GetCurrentIdentity());
 
@@ -270,26 +270,14 @@ public sealed class AccountService
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(profile.Email) && !string.IsNullOrWhiteSpace(identity.Email)
-            && string.Equals(profile.Email.Trim(), identity.Email.Trim(), StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(profile.Email) && !string.IsNullOrWhiteSpace(identity.Email))
         {
-            return true;
+            return string.Equals(profile.Email.Trim(), identity.Email.Trim(), StringComparison.OrdinalIgnoreCase);
         }
 
-        if (!string.IsNullOrWhiteSpace(profile.AccountId) && !string.IsNullOrWhiteSpace(identity.AccountId)
-            && string.Equals(profile.AccountId, identity.AccountId, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        if (!string.IsNullOrWhiteSpace(profile.AccountKey)
-            && string.Equals(profile.AccountKey, identity.AccountKey, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return !string.IsNullOrWhiteSpace(profile.Fingerprint)
-            && string.Equals(profile.Fingerprint, identity.Fingerprint, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(profile.AccountKey)
+            && profile.AccountKey.StartsWith("email:", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(profile.AccountKey, identity.AccountKey, StringComparison.OrdinalIgnoreCase);
     }
 
     private AccountProfile? FindMatchingProfile(DetectedAccount identity) =>
